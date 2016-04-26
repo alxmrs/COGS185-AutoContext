@@ -307,7 +307,6 @@ class AutoContext(object):
             n_classes = self.n_classes
 
         word_len = conf.shape[0]
-        # print(word_len)
         W = np.zeros((word_len, 2*window_size*n_classes))
         for i in range(word_len):
             for w in range(-window_size, window_size):
