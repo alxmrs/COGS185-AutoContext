@@ -151,7 +151,7 @@ class AutoContext(object):
         predictions = []
         for i in range(self.Ns):
             tmp_pred = []
-            for j in range(self.wind_size):
+            for j in range(self.window_size):
                 x = self.X[i, j*self.du:(j + 1) * self.du]
                 y = self.Y[i, j]
                 datapoint = np.hstack((x, y))
@@ -171,21 +171,21 @@ class AutoContext(object):
             self.prep_ocr_data()
 
 
-        confidence = np.zeros(self.Ntr, self.n_classes)
+        confidence = np.zeros((self.Ntr, self.n_classes))
         error1 = []
         error2 = []
 
         for i in range(self.num_iterations):
 
-            W = np.zeros(self.Ntr, self.dtr + self.n_classes * self.wind_size * 2)  # Weight matrix: X + confidence
-            Y = np.zeros(self.Ntr)                                                  # Cached predictions
+            W = np.zeros((self.Ntr, self.dtr + self.n_classes * self.window_size * 2))    # Weight matrix: X + confidence
+            Y = np.zeros(self.Ntr)                                                      # Cached predictions
 
             curr_line = 0
 
             for j in range(len(self.train)):
                 word = self.train[j]        # get current word (X, which consists of x_1, x_2, ... x_m
                 word_len = word.shape[0]    # find num letters in X (i.e. m)
-                word[:, self.dtr:] = confidence[curr_line:curr_line+word_len, :]
+                # word[:, self.dtr:] = confidence[curr_line:curr_line+word_len, :]  # TODO: necessary?
                 W[curr_line:curr_line+word_len, :self.dtr] = word[:, :self.dtr]
                 W[curr_line:curr_line+word_len, self.dtr:] = self.extend_context(
                         confidence[curr_line:curr_line+word_len, :]
@@ -222,7 +222,7 @@ class AutoContext(object):
             word_len = word.shape[0]
             Y = word[:, -1]
 
-            # prediction input needs to be of dim: self.dtr + self.n_classes * self.wind_size * 2
+            # prediction input needs to be of dim: self.dtr + self.n_classes * self.window_size * 2
             W = np.zeros(word_len, self.dtr + self.n_classes * self.window_size * 2)
             # W : [X | extended context]
             W[:, :self.dtr] = word[:, :self.dtr]
@@ -251,11 +251,11 @@ class AutoContext(object):
         if n_classes is None:
             n_classes = self.n_classes
 
-        word_len = z.shape[0]
-        W = np.zeros(word_len, 2*window_size*n_classes)
+        word_len = conf.shape[0]
+        W = np.zeros((word_len, 2*window_size*n_classes))
         for i in range(word_len):
             for w in range(-window_size, window_size):
-                if 0 <= i + w <= word_len:
+                if 0 <= i + w < word_len:
                     if w < 0:
                         W[i, (window_size + w)*n_classes : (window_size+w)*n_classes + n_classes] =\
                             conf[i + w, :n_classes]
@@ -264,8 +264,6 @@ class AutoContext(object):
                             conf[i + w, :n_classes]
 
         return W
-
-
 
 
 def main():
