@@ -114,10 +114,10 @@ class AutoContext(object):
 
         for i in range(Nt):
             if one_hot:
-                y = np.ones((1, self.n_classes))*-1         # one-hot encoding of label
-                y[selected_unstructured_data[label_idx]] = 1
+                y = np.ones((1, self.n_classes))*-1             # one-hot encoding of label
+                y[selected_unstructured_data[i, label_idx]] = 1
             else:
-                y = selected_unstructured_data[label_idx]     # scalar encoding of label
+                y = selected_unstructured_data[i, label_idx]    # scalar encoding of label
 
             data_tmp = np.vstack((data_tmp, np.hstack((selected_unstructured_data[i, f_start:], y))))
 
@@ -167,6 +167,9 @@ class AutoContext(object):
         :return:
         '''
         # prep data
+        if self.train is None:
+            self.prep_ocr_data()
+
 
         confidence = np.zeros(self.Ntr, self.n_classes)
         error1 = []
@@ -298,9 +301,13 @@ def main():
     # print(predictions[:20])
 
     # strategy 2
-    print('running strategy 2: svm-based auto-context')
-    oc = AutoContext(letter_data,26,2,2)
-    print(oc.train[:5,:])
+    print('Creating AutoContext object, prepping OCR dataset')
+    ac = AutoContext(letter_data,26,2,2)
+    # print(ac.train[1].shape)  # sanity check
+    # print(ac.Ntr, ac.dtr)
+
+    print('Running Strategy 2: SVM-based Auto Context')
+    ac.strategy2()
 
 if __name__ == '__main__':
     main()
