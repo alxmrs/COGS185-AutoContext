@@ -166,22 +166,26 @@ class AutoContext(object):
         SVM-based auto-context
         :return:
         '''
+        print('entering strategy2')
         # prep data
         if self.train is None:
             self.prep_ocr_data()
 
-
         confidence = np.zeros((self.Ntr, self.n_classes))
-        error1 = []
-        error2 = []
+        accurracy1 = []
+        accurracy2 = []
 
         for i in range(self.num_iterations):
+            print('Iteration number ' + str(i+1) + ' out of ' + str(self.num_iterations))
 
             W = np.zeros((self.Ntr, self.dtr + self.n_classes * self.window_size * 2))    # Weight matrix: X + confidence
             Y = np.zeros(self.Ntr)                                                      # Cached predictions
 
+            # print(W.shape)
+
             curr_line = 0
 
+            print('Prepping data')
             for j in range(len(self.train)):
                 word = self.train[j]        # get current word (X, which consists of x_1, x_2, ... x_m
                 word_len = word.shape[0]    # find num letters in X (i.e. m)
@@ -191,24 +195,30 @@ class AutoContext(object):
                         confidence[curr_line:curr_line+word_len, :]
                 )
 
+                # TODO: replace with vectorized version
                 for k in range(word_len):
                     Y[curr_line] = self.train[j][k, -1]
                     curr_line += 1
 
             # W[:, :self.ds] = self.X
 
-            svm_class = svm.LinearSVC(multi_class='crammer_singer', random_state=i)  # multiclass, consistent seed
+            print('Building model')
+            svm_class = svm.LinearSVC(multi_class='crammer_singer', random_state=0)  # multiclass, consistent seed
             svm_class.fit(W, Y)
 
             self.models.append((svm_class, W))
 
+            print('Performing prediction')
             # Perform prediction
             if i < self.num_iterations:
-                err1, err2, confidence = self.run_svm_test(W, confidence, svm_class)
-                error1.append(err1)
-                error2.append(err2)
+                acc1, acc2, confidence = self.run_svm_test(self.train, confidence, svm_class, W)
+                accurracy1.append(acc1)
+                accurracy2.append(acc2)
 
-    def run_svm_test(self, test_data, confidence, svm, norm=False):
+        return accurracy1, accurracy2, confidence
+
+    def run_svm_test(self, test_data, confidence, svm, x_train, norm=True):
+        print('\tentering run_svm_train')
         Nt = len(test_data)
         err1 = 0
         err2 = 0
@@ -218,30 +228,34 @@ class AutoContext(object):
 
         cur_line = 0
         for i in range(Nt):
+
             word = test_data[i]
             word_len = word.shape[0]
+            # print(word.shape)
             Y = word[:, -1]
 
-            # prediction input needs to be of dim: self.dtr + self.n_classes * self.window_size * 2
-            W = np.zeros(word_len, self.dtr + self.n_classes * self.window_size * 2)
-            # W : [X | extended context]
-            W[:, :self.dtr] = word[:, :self.dtr]
-            W[:, self.dtr:] = self.extend_context(confidence[cur_line:cur_line+word_len, :])
-
             # TODO: implemented iterative context inference
-            y_hat = svm.predict(W)
-            conf = svm.decision_function(W)
+            W_prime = np.zeros((word_len, self.dtr + self.n_classes * self.window_size * 2))
+            # W_prime : [X | extended context]
+            W_prime[:, :self.dtr] = word[:, :self.dtr]
+            W_prime[:, self.dtr:] = self.extend_context(confidence[cur_line:cur_line + word_len, :])
+
+            # y_hat = svm.predict(W_prime)          # Predictions
+            conf = svm.decision_function(W_prime)   # Confidence measures of predictions
 
             if norm:
-                conf = (1 + np.exp(-1*conf))**-1    # sigmoid function
+                conf = (1 + np.exp(-1*conf))**-1    # Sigmoid function
 
             conf_new[cur_line : cur_line+word_len, :] = conf
+            cur_line += word_len
 
             # Calculate error rates
             total1 += word_len
             total2 += 1
-            err2 = svm.score(W, Y)
-            err1 = err2 * word_len
+            subtask_err = svm.score(W_prime, Y)
+            err2 += subtask_err
+            err1 += subtask_err * word_len
+            print('\t\tShort-term error: ' + str(subtask_err))
 
         return err1/total1, err2/total2, conf_new
 
@@ -300,12 +314,14 @@ def main():
 
     # strategy 2
     print('Creating AutoContext object, prepping OCR dataset')
-    ac = AutoContext(letter_data,26,2,2)
+    ac = AutoContext(letter_data,26,4,3)
     # print(ac.train[1].shape)  # sanity check
     # print(ac.Ntr, ac.dtr)
 
     print('Running Strategy 2: SVM-based Auto Context')
-    ac.strategy2()
+    accuracy1, accuracy2, conf = ac.strategy2()
+    print(accuracy1)
+    print(accuracy2)
 
 if __name__ == '__main__':
     main()
