@@ -97,20 +97,30 @@ class AutoContext(object):
         self.models = []
 
         if dataset == 'OCR':
-            self.train, self.test, self.Ntr, self.dtr = self.prep_ocr_data()
+            self.train, self.test, self.N, self.dtr, self.Ntr, self.Ntst = self.prep_ocr_data()
 
-    def prep_ocr_data(self, fold=0, fold_idx=5, f_start=6, next_id_idx=2, label_idx=1, one_hot=False):
+    def prep_ocr_data(self, fold=[0, 1], test_fold=2, fold_idx=5, f_start=6, next_id_idx=2, label_idx=1, one_hot=False):
         if one_hot:
             y_space = self.n_classes
         else:
             y_space = 1
 
-        selected_unstructured_data = self.unstructured_data[self.unstructured_data[:, fold_idx] == fold, :]  # num training egs, dim data
+        if type(fold) is int:
+            fold = [fold]
+
+        if type(test_fold) is int:
+            test_fold = [test_fold]
+
+        selected_unstructured_data = self.unstructured_data
+
         Nt, du = selected_unstructured_data.shape
         dt = du - f_start
         data_tmp = np.zeros((1, dt + y_space))
         train = []
         test  = []
+
+        Ntr = 0
+        Ntst = 0
 
         for i in range(Nt):
             if one_hot:
@@ -122,13 +132,15 @@ class AutoContext(object):
             data_tmp = np.vstack((data_tmp, np.hstack((selected_unstructured_data[i, f_start:], y))))
 
             if selected_unstructured_data[i, next_id_idx] == -1:
-                if selected_unstructured_data[i, fold_idx] == fold:
+                if selected_unstructured_data[i, fold_idx] in fold:
                     train.append(data_tmp[1:, :])
-                else:
+                    Ntr += 1
+                elif selected_unstructured_data[i, fold_idx] in test_fold:
                     test.append(data_tmp[1:, :])
+                    Ntst += 1
                 data_tmp = np.zeros((1, dt + y_space))
 
-        return train, test, Nt, dt
+        return train, test,  Nt, dt, Ntr, Ntst
 
     def train_forest(self, n_trees=10, subsample=.10, linspace=20, n_workers=None):
         print('Training forest...')
@@ -166,7 +178,6 @@ class AutoContext(object):
         SVM-based auto-context
         :return:
         '''
-        print('entering strategy2')
         # prep data
         if self.train is None:
             self.prep_ocr_data()
@@ -211,15 +222,16 @@ class AutoContext(object):
             print('Performing prediction')
             # Perform prediction
             if i < self.num_iterations:
-                acc1, acc2, confidence = self.run_svm_test(self.train, confidence, svm_class, W)
+                acc1, acc2, confidence = self.svm_inference(self.train, confidence, svm_class)
                 accurracy1.append(acc1)
                 accurracy2.append(acc2)
 
         return accurracy1, accurracy2, confidence
 
-    def run_svm_test(self, test_data, confidence, svm, x_train, norm=True):
-        print('\tentering run_svm_train')
-        Nt = len(test_data)
+    def svm_inference(self, data, confidence, svm, norm=True):
+        print('\tPerforming SVM inference')
+        Nt = len(data)
+        print(Nt)
         err1 = 0
         err2 = 0
         total1 = 0
@@ -229,7 +241,7 @@ class AutoContext(object):
         cur_line = 0
         for i in range(Nt):
 
-            word = test_data[i]
+            word = data[i]
             word_len = word.shape[0]
             # print(word.shape)
             Y = word[:, -1]
@@ -238,13 +250,21 @@ class AutoContext(object):
             W_prime = np.zeros((word_len, self.dtr + self.n_classes * self.window_size * 2))
             # W_prime : [X | extended context]
             W_prime[:, :self.dtr] = word[:, :self.dtr]
-            W_prime[:, self.dtr:] = self.extend_context(confidence[cur_line:cur_line + word_len, :])
+            # print(word[:,-1].T)
+            # print(word_len)
+            # print(cur_line)
+            # print(confidence.shape)
+            # print(confidence[cur_line:(cur_line+word_len), 0])
+            # print(self.Ntr)
+            # print(ext_context.shape)
+            # print(W_prime.shape)
+            W_prime[:, self.dtr:] = self.extend_context(confidence[cur_line:(cur_line + word_len), :])
 
             # y_hat = svm.predict(W_prime)          # Predictions
             conf = svm.decision_function(W_prime)   # Confidence measures of predictions
 
             if norm:
-                conf = (1 + np.exp(-1*conf))**-1    # Sigmoid function
+                conf = (1 + np.exp(-1*conf))**-1    # Sigmoid function --> Normalization
 
             conf_new[cur_line : cur_line+word_len, :] = conf
             cur_line += word_len
@@ -259,13 +279,35 @@ class AutoContext(object):
 
         return err1/total1, err2/total2, conf_new
 
+    def predict(self, test_data=None):
+        if test_data is None:
+            test_data = self.test
+        n_iter = len(self.models)
+
+        n_test_inst = 0
+
+        confidence = np.zeros((self.Ntst, self.n_classes))
+
+        accuracy1 = []
+        accuracy2 = []
+
+        for i in range(n_iter):
+            curr_model, _ = self.models[i]
+            acc1, acc2, confidence = self.svm_inference(test_data, confidence, curr_model)
+            accuracy1.append(acc1)
+            accuracy2.append(acc2)
+
+        return accuracy1, accuracy2, confidence
+
     def extend_context(self, conf, window_size=None, n_classes=None):
+        # print('in ext cont')
         if window_size is None:
             window_size = self.window_size
         if n_classes is None:
             n_classes = self.n_classes
 
         word_len = conf.shape[0]
+        # print(word_len)
         W = np.zeros((word_len, 2*window_size*n_classes))
         for i in range(word_len):
             for w in range(-window_size, window_size):
@@ -314,14 +356,22 @@ def main():
 
     # strategy 2
     print('Creating AutoContext object, prepping OCR dataset')
-    ac = AutoContext(letter_data,26,4,3)
+    ac = AutoContext(letter_data,26,1,3)
     # print(ac.train[1].shape)  # sanity check
     # print(ac.Ntr, ac.dtr)
 
-    print('Running Strategy 2: SVM-based Auto Context')
-    accuracy1, accuracy2, conf = ac.strategy2()
-    print(accuracy1)
-    print(accuracy2)
+    print('Training Strategy 2: SVM-based Auto Context')
+    tr_accuracy1, tr_accuracy2, conf = ac.strategy2()
+    print('Training accuracy (by word and letter):')
+    print(tr_accuracy1)
+    print(tr_accuracy2)
+    print('Testing Strategy 2')
+    ts_accuracy1, ts_accuracy2, conf = ac.predict()
+    print('Testing accuracy (by word and by letter):')
+    print(ts_accuracy1)
+    print(ts_accuracy2)
+
+
 
 if __name__ == '__main__':
     main()
