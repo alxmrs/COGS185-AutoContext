@@ -232,8 +232,8 @@ class AutoContext(object):
         print('\tPerforming SVM inference')
         Nt = len(data)
         print(Nt)
-        err1 = 0
-        err2 = 0
+        acc1 = 0
+        acc2 = 0
         total1 = 0
         total2 = 0
         conf_new = np.zeros(confidence.shape)
@@ -250,14 +250,6 @@ class AutoContext(object):
             W_prime = np.zeros((word_len, self.dtr + self.n_classes * self.window_size * 2))
             # W_prime : [X | extended context]
             W_prime[:, :self.dtr] = word[:, :self.dtr]
-            # print(word[:,-1].T)
-            # print(word_len)
-            # print(cur_line)
-            # print(confidence.shape)
-            # print(confidence[cur_line:(cur_line+word_len), 0])
-            # print(self.Ntr)
-            # print(ext_context.shape)
-            # print(W_prime.shape)
             W_prime[:, self.dtr:] = self.extend_context(confidence[cur_line:(cur_line + word_len), :])
 
             # y_hat = svm.predict(W_prime)          # Predictions
@@ -272,12 +264,12 @@ class AutoContext(object):
             # Calculate error rates
             total1 += word_len
             total2 += 1
-            subtask_err = svm.score(W_prime, Y)
-            err2 += subtask_err
-            err1 += subtask_err * word_len
-            print('\t\tShort-term error: ' + str(subtask_err))
+            subtask_acc = svm.score(W_prime, Y)
+            acc2 += subtask_acc
+            acc1 += subtask_acc * word_len
+            print('\t\tShort-term accuracy: ' + str(subtask_acc))
 
-        return err1/total1, err2/total2, conf_new
+        return acc1/total1, acc2/total2, conf_new
 
     def predict(self, test_data=None):
         if test_data is None:
@@ -300,7 +292,6 @@ class AutoContext(object):
         return accuracy1, accuracy2, confidence
 
     def extend_context(self, conf, window_size=None, n_classes=None):
-        # print('in ext cont')
         if window_size is None:
             window_size = self.window_size
         if n_classes is None:
@@ -355,7 +346,7 @@ def main():
 
     # strategy 2
     print('Creating AutoContext object, prepping OCR dataset')
-    ac = AutoContext(letter_data,26,1,3)
+    ac = AutoContext(letter_data,26,4,3)
     # print(ac.train[1].shape)  # sanity check
     # print(ac.Ntr, ac.dtr)
 
