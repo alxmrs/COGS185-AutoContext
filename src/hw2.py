@@ -130,17 +130,17 @@ class AutoContext(object):
                 y = selected_unstructured_data[i, label_idx]    # scalar encoding of label
 
             data_tmp = np.vstack((data_tmp, np.hstack((selected_unstructured_data[i, f_start:], y))))
-
+            data_len = data_tmp.shape[0] - 1
             if selected_unstructured_data[i, next_id_idx] == -1:
                 if selected_unstructured_data[i, fold_idx] in fold:
                     train.append(data_tmp[1:, :])
-                    Ntr += 1
+                    Ntr += data_len
                 elif selected_unstructured_data[i, fold_idx] in test_fold:
                     test.append(data_tmp[1:, :])
-                    Ntst += 1
+                    Ntst += data_len
                 data_tmp = np.zeros((1, dt + y_space))
 
-        return train, test,  Nt, dt, Ntr, Ntst
+        return train, test, Nt, dt, Ntr, Ntst
 
     def train_forest(self, n_trees=10, subsample=.10, linspace=20, n_workers=None):
         print('Training forest...')
