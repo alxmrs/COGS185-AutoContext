@@ -200,18 +200,14 @@ class AutoContext(object):
             for j in range(len(self.train)):
                 word = self.train[j]        # get current word (X, which consists of x_1, x_2, ... x_m
                 word_len = word.shape[0]    # find num letters in X (i.e. m)
-                # word[:, self.dtr:] = confidence[curr_line:curr_line+word_len, :]  # TODO: necessary?
+
                 W[curr_line:curr_line+word_len, :self.dtr] = word[:, :self.dtr]
                 W[curr_line:curr_line+word_len, self.dtr:] = self.extend_context(
                         confidence[curr_line:curr_line+word_len, :]
                 )
 
-                # TODO: replace with vectorized version
-                for k in range(word_len):
-                    Y[curr_line] = self.train[j][k, -1]
-                    curr_line += 1
-
-            # W[:, :self.ds] = self.X
+                Y[curr_line:curr_line+word_len] = self.train[j][:, -1]
+                curr_line += word_len
 
             print('Building model')
             svm_class = svm.LinearSVC(multi_class='crammer_singer', random_state=0)  # multiclass, consistent seed
@@ -275,8 +271,6 @@ class AutoContext(object):
         if test_data is None:
             test_data = self.test
         n_iter = len(self.models)
-
-        n_test_inst = 0
 
         confidence = np.zeros((self.Ntst, self.n_classes))
 
