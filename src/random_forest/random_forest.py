@@ -460,7 +460,7 @@ class RandomForest(object):
 
         total = 0.0
         for tree in self.forest:
-            p = tree.predict(data_point)
+            p = tree.svm_predict(data_point)
 
             if p not in labels:
                 labels[p] = 0.0
@@ -620,14 +620,16 @@ def calc_freq(ys):
     :param ys: labels, or y values
     '''
     label = {}
+    total = 0
     for y in ys:
         if y not in label:
             label[y] = 0.0
         label[y] += 1
+        total += 1
     print(label)
 
     for k in label.keys():
-        label[k] = label[k] / D_y.shape[0]
+        label[k] = label[k] / total
 
     print(label)
 
@@ -754,7 +756,7 @@ if __name__ == '__main__':
             # Test OVA classes
             for l, c in enumerate(classifiers):
                 for m in range(Nt):
-                    predictions[m, l] = c.predict(test[m, :-1])
+                    predictions[m, l] = c.svm_predict(test[m, :-1])
 
             # Gen Confusion Matrix
             CMX, err = ova_confusion_err(predictions, test, n_classes)

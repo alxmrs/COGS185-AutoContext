@@ -1,63 +1,8 @@
 from random_forest.random_forest import *
 from sklearn import svm
-# import random_forest
-# import random_forest
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
-from multiprocessing import Pool
-import sys, os
-
-
-def to_record_array(np_arr):
-    '''
-    take in a numpy array, return a labeled numpy array of tuples with the proper data type
-    :param np_arr: numpy array
-    :return: labeled structured array of tuples with proper data type
-    '''
-
-    # Get column labels
-    data_cols = []
-    with open('../data/letter.names.txt') as f:
-        for line in f:
-            data_cols.append(str(line.strip('\n')))
-
-    # create list of column data types
-    data_col_types = ['i1', 'S1']
-    for i in range(2, len(data_cols)):
-        data_col_types.append('i1')
-
-    # zip them together in a list
-    dtypes = [(d, t) for d, t in zip(data_cols, data_col_types)]
-
-    # create data type object
-    data_dtype = np.dtype(dtypes)
-
-    # return new structured array (will be a numpy array of tuples)
-    return np.core.records.array(list(tuple(np_arr.transpose())), dtype=data_dtype)
-
-
-def format_array(arr):
-    arr[: 1] = [ord(c) - 97 for c in arr[:,1]]
-    return arr.astype('i1')
-
-
-def concat_ocr_data(data, window_size):
-    f_start = 6     # start of features
-    pos_idx = 4     # word position index
-    label_idx = 2   # label index
-
-    data_new = data.copy()
-    data_new = data_new[data_new[:, pos_idx] <= window_size]
-
-    X = data_new[0::window_size, f_start:]
-    Y = data_new[0::window_size, label_idx]
-    for i in range(1, window_size):
-        X = np.hstack((X, data_new[i::window_size, f_start:]))
-        Y = np.vstack((Y, data_new[i::window_size, label_idx]))
-
-    return X, Y.T
-
+import sys
 
 class AutoContext(object):
     '''
@@ -68,18 +13,6 @@ class AutoContext(object):
     C3: p(3)(y | x, p(2)(y | ..)) --> p(3)(y | ..)
 
     ...
-    -- The auto context algorithm using a multiclass random forest instead of a structure random forest --
-
-    Strategy 1:
-
-    Train one random forest on all of the input data, performing traditional multiclass classification.
-    Then, when classifying each label of the structured input (which will be concatenated x values), predict one label
-    at a time and output its confidence value. When predicting the next label, sum the previous labels confidence value:
-    Augment the confidence of each classification with the confidence of its neighbors.
-
-    Strategy 2:
-
-    Multiclass SVM approach using sci-kit learn's LinearSVC classifier (using crammer_singer implementation).
 
     '''
     def __init__(self, unstructured_data, n_classes, n_iter, w_size, dataset='OCR'):
@@ -98,8 +31,9 @@ class AutoContext(object):
 
         if dataset == 'OCR':
             self.train, self.test, self.N, self.dtr, self.Ntr, self.Ntst = self.prep_ocr_data()
+            self.test_labels = np.zeros((self.Ntst))
 
-    def prep_ocr_data(self, fold=[0, 1], test_fold=2, fold_idx=5, f_start=6, next_id_idx=2, label_idx=1, one_hot=False):
+    def prep_ocr_data(self, fold=[0, 1], test_fold=9, fold_idx=5, f_start=6, next_id_idx=2, label_idx=1, one_hot=False):
         if one_hot:
             y_space = self.n_classes
         else:
@@ -154,6 +88,18 @@ class AutoContext(object):
             self.strategy2()
 
     def strategy1(self):
+        '''
+        Strategy 1: The auto context algorithm using a multiclass random forest instead of a structure random forest
+
+        Professor Tu's original recommendation:
+
+        Train one random forest on all of the input data, performing traditional multiclass classification.
+        Then, when classifying each label of the structured input (which will be concatenated x values), predict one
+        label at a time and output its confidence value. When predicting the next label, sum the previous labels
+        confidence value: Augment the confidence of each classification with the confidence of its neighbors.
+
+        :return:
+        '''
         # Train one random forest on all input data via multiclassification
         if self.forest is None:
             self.train_forest()
@@ -175,7 +121,9 @@ class AutoContext(object):
 
     def strategy2(self):
         '''
-        SVM-based auto-context
+        Strategy 2: Multiclass SVM approach using sci-kit learn's LinearSVC classifier (using crammer_singer
+        implementation).
+
         :return:
         '''
         # prep data
@@ -189,7 +137,7 @@ class AutoContext(object):
         for i in range(self.num_iterations):
             print('Iteration number ' + str(i+1) + ' out of ' + str(self.num_iterations))
 
-            W = np.zeros((self.Ntr, self.dtr + self.n_classes * self.window_size * 2))    # Weight matrix: X + confidence
+            W = np.zeros((self.Ntr, self.dtr + self.n_classes * self.window_size * 2))  # Weight matrix: X + confidence
             Y = np.zeros(self.Ntr)                                                      # Cached predictions
 
             # print(W.shape)
@@ -224,7 +172,7 @@ class AutoContext(object):
 
         return accurracy1, accurracy2, confidence
 
-    def svm_inference(self, data, confidence, svm, norm=True):
+    def svm_inference(self, data, confidence, svm, norm=True, in_test=False):
         print('\tPerforming SVM inference')
         Nt = len(data)
         print(Nt)
@@ -240,7 +188,11 @@ class AutoContext(object):
             word = data[i]
             word_len = word.shape[0]
             # print(word.shape)
+
             Y = word[:, -1]
+
+            if in_test:
+                self.test_labels[cur_line:cur_line+word_len] = Y
 
             # TODO: implemented iterative context inference
             W_prime = np.zeros((word_len, self.dtr + self.n_classes * self.window_size * 2))
@@ -257,17 +209,17 @@ class AutoContext(object):
             conf_new[cur_line : cur_line+word_len, :] = conf
             cur_line += word_len
 
-            # Calculate error rates
+            # Calculate accuracy rates
             total1 += word_len
             total2 += 1
             subtask_acc = svm.score(W_prime, Y)
             acc2 += subtask_acc
             acc1 += subtask_acc * word_len
-            print('\t\tShort-term accuracy: ' + str(subtask_acc))
+            # print('\t\tShort-term accuracy: ' + str(subtask_acc))
 
         return acc1/total1, acc2/total2, conf_new
 
-    def predict(self, test_data=None):
+    def svm_predict(self, test_data=None):
         if test_data is None:
             test_data = self.test
         n_iter = len(self.models)
@@ -279,7 +231,7 @@ class AutoContext(object):
 
         for i in range(n_iter):
             curr_model, _ = self.models[i]
-            acc1, acc2, confidence = self.svm_inference(test_data, confidence, curr_model)
+            acc1, acc2, confidence = self.svm_inference(test_data, confidence, curr_model, True, True)
             accuracy1.append(acc1)
             accuracy2.append(acc2)
 
@@ -323,38 +275,120 @@ def main():
     letter_data = letter_data.astype('i1')
     print('data converted to ints')
 
-    # strategy 1: concat letters into words of a particular window size
-    # X, Y = concat_ocr_data(letter_data, 3)
-    #
-    # train = letter_data[:, 6:]
-    # print(train.shape, letter_data[:,2].shape)
-    # train = np.hstack((train, letter_data[:,2].reshape((letter_data.shape[0], 1))))  # [X | y]
-    #
-    # print(train.shape)
-    # print(X.shape, Y.shape)
-    #
-    # ac = AutoContext(X[:25, :], Y[:25, :], train[:50, :])
-    # predictions = ac.strategy1()
-    #
-    # print(predictions[:20])
+    # Strategy 2
+    j = 4
+    test_accuracies1 = np.zeros((1, j))
+    test_accuracies2 = np.zeros((1, j))
+    # test hyper-parameters: i --> window size, j --> number of iterations
+    for i in range(1, 9):
 
-    # strategy 2
-    print('Creating AutoContext object, prepping OCR dataset')
-    ac = AutoContext(letter_data,26,4,3)
-    # print(ac.train[1].shape)  # sanity check
-    # print(ac.Ntr, ac.dtr)
+        print('Creating AutoContext object, prepping OCR dataset')
+        ac = AutoContext(letter_data,26,j,i)
+        # print(ac.train[1].shape)  # sanity check
+        # print(ac.Ntr, ac.dtr)
 
-    print('Training Strategy 2: SVM-based Auto Context')
-    tr_accuracy1, tr_accuracy2, conf = ac.strategy2()
-    print('Training accuracy (by word and letter):')
-    print(tr_accuracy1)
-    print(tr_accuracy2)
-    print('Testing Strategy 2')
-    ts_accuracy1, ts_accuracy2, conf = ac.predict()
-    print('Testing accuracy (by word and by letter):')
-    print(ts_accuracy1)
-    print(ts_accuracy2)
+        print('Training Strategy 2: SVM-based Auto Context')
+        tr_accuracy1, tr_accuracy2, conf = ac.strategy2()
+        print('Training accuracy (by word and letter):')
+        print(tr_accuracy1)
+        print(tr_accuracy2)
+        print('Testing Strategy 2')
+        ts_accuracy1, ts_accuracy2, conf = ac.svm_predict()
+        print('Testing accuracy (by word and by letter):')
+        print(ts_accuracy1)
+        print(ts_accuracy2)
+        test_accuracies1 = np.vstack((test_accuracies1, ts_accuracy1))
+        test_accuracies2 = np.vstack((test_accuracies2, ts_accuracy2))
 
+    print(test_accuracies1)
+    print(test_accuracies2)
+    #
+    np.savetxt('accuracies1', test_accuracies1[1:,:], '%.5f')
+    np.savetxt('accuracies2', test_accuracies2[1:,:], '%.5f')
+
+    cmx = confusion_mx(np.argmax(conf, axis=1), ac.test_labels, 26)
+
+    # print(cmx)
+    plt.imshow(cmx)
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted label')
+    plt.ylabel('True label')
+
+    np.savetxt('confusion_mx', cmx, '%.5f')
+
+
+def confusion_mx(predictions, test_label, n_classes):
+    '''
+    Cij/Nj where Cij is the number of test examples that have label
+    j but are classified as label i by the classifier, and Nj is the
+    number of test examples that have label j.
+    :param test_label:
+    :param n_classes:
+    :return: Cij/Nj
+    '''
+    N = len(predictions)
+
+    Cij = np.zeros((n_classes, n_classes))
+    Nj  = np.zeros((n_classes, 1))
+
+    for i in range(N):
+        prediction = predictions[i]
+        actual     = test_label[i]
+
+        Cij[prediction, int(actual)] += 1
+        Nj[int(actual)] += 1
+
+    return Cij / Nj.T
+
+
+def to_record_array(np_arr):
+    '''
+    take in a numpy array, return a labeled numpy array of tuples with the proper data type
+    :param np_arr: numpy array
+    :return: labeled structured array of tuples with proper data type
+    '''
+
+    # Get column labels
+    data_cols = []
+    with open('../data/letter.names.txt') as f:
+        for line in f:
+            data_cols.append(str(line.strip('\n')))
+
+    # create list of column data types
+    data_col_types = ['i1', 'S1']
+    for i in range(2, len(data_cols)):
+        data_col_types.append('i1')
+
+    # zip them together in a list
+    dtypes = [(d, t) for d, t in zip(data_cols, data_col_types)]
+
+    # create data type object
+    data_dtype = np.dtype(dtypes)
+
+    # return new structured array (will be a numpy array of tuples)
+    return np.core.records.array(list(tuple(np_arr.transpose())), dtype=data_dtype)
+
+
+def format_array(arr):
+    arr[: 1] = [ord(c) - 97 for c in arr[:,1]]
+    return arr.astype('i1')
+
+
+def concat_ocr_data(data, window_size):
+    f_start = 6     # start of features
+    pos_idx = 4     # word position index
+    label_idx = 2   # label index
+
+    data_new = data.copy()
+    data_new = data_new[data_new[:, pos_idx] <= window_size]
+
+    X = data_new[0::window_size, f_start:]
+    Y = data_new[0::window_size, label_idx]
+    for i in range(1, window_size):
+        X = np.hstack((X, data_new[i::window_size, f_start:]))
+        Y = np.vstack((Y, data_new[i::window_size, label_idx]))
+
+    return X, Y.T
 
 
 if __name__ == '__main__':
